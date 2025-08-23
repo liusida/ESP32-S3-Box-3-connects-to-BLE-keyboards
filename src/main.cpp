@@ -117,7 +117,10 @@ static bool readReportRef(NimBLERemoteCharacteristic* chr, uint8_t& idOut, uint8
 }
 
 /* Subscribe to all Input Report characteristics (0x2A4D with type==Input) */
-static void subscribeAllInputReports(NimBLERemoteService* hid) {
+static void subscribeAllInputReportsFromHIDService() {
+  NimBLERemoteService* hid = g_client->getService(UUID_HID_SERVICE);
+  if (!hid) { g_client->disconnect(); return; }
+
   g_inputs.clear();
 
   const std::vector<NimBLERemoteCharacteristic*>& chars = hid->getCharacteristics(/*refresh=*/true);
@@ -154,105 +157,89 @@ static void subscribeAllInputReports(NimBLERemoteService* hid) {
   }
 }
 
+static void connectKeyboard() {
+  // Gather bonded addresses if you have them (NimBLE 2.3.4 has index-based getters)
+  std::vector<NimBLEAddress> bondedAddrs;
+  
+  const int n = NimBLEDevice::getNumBonds();
+  for (int i = 0; i < n; ++i) bondedAddrs.push_back(NimBLEDevice::getBondedAddress(i));
 
-/* --- Connect and subscribe (Report Protocol) --- */
-static bool connectAndSubscribe(const NimBLEAdvertisedDevice* adv) {
-  Serial.print("[BLE] Connecting to ");
-  Serial.println(adv->getAddress().toString().c_str());
-
-  g_client = NimBLEDevice::createClient();
-  if (!g_client->connect(adv)) {
-    Serial.println("[BLE] Connect failed");
-    NimBLEDevice::deleteClient(g_client);
-    g_client = nullptr;
-    return false;
-  }
-  Serial.println("[BLE] Connected");
-
-  NimBLERemoteService* hid = g_client->getService(UUID_HID_SERVICE);
-  if (!hid) {
-    Serial.println("[HID] HID service not found");
-    g_client->disconnect();
-    return false;
-  }
-
-  // We can stay in Report Protocol (default). If a device supports Boot Mode and you want it:
-  // if (auto* proto = hid->getCharacteristic(UUID_PROTO_MODE)) { uint8_t boot=0x00; proto->writeValue(&boot,1,true); }
-
-  // Optional: read Report Map for debugging
-  if (auto* mapChr = hid->getCharacteristic(UUID_REPORT_MAP)) {
-    std::string map = mapChr->readValue();
-    Serial.print("[HID] Report Map size: ");
-    Serial.println(map.size());
-    // If you want, print some bytes:
-    // for (size_t i=0;i<min<size_t>(map.size(),32);++i){ if((uint8_t)map[i]<16)Serial.print('0'); Serial.print((uint8_t)map[i],HEX); Serial.print(' '); } Serial.println();
-  }
-
-  subscribeAllInputReports(hid);
-  return !g_inputs.empty();
-}
-
-/* --- Scan helpers (same as your working version) --- */
-static const NimBLEAdvertisedDevice* pickKeyboardFrom(const NimBLEScanResults& res) {
-  for (int i = 0; i < res.getCount(); ++i) {
-    const NimBLEAdvertisedDevice* d = res.getDevice(i);
-    if (!d) continue;
-    bool hasHID = d->isAdvertisingService(UUID_HID_SERVICE);
-    std::string name = d->getName();
-    bool looksLikeKb = name.find("Keyboard") != std::string::npos;
-
-    if (hasHID || looksLikeKb) {
-      Serial.print("[SCAN] Candidate: ");
-      Serial.print(name.c_str());
-      Serial.print("  ");
-      Serial.println(d->getAddress().toString().c_str());
-      return d;
-    }
-  }
-  return nullptr;
-}
-
-static void scanAndConnectLoop() {
   NimBLEScan* scan = NimBLEDevice::getScan();
   scan->setActiveScan(true);
   scan->setInterval(45);
-  scan->setWindow(30);
+  scan->setWindow(45);
 
-  while (true) {
-    Serial.println("[SCAN] Scanning for 5s...");
-    NimBLEScanResults results = scan->getResults(5000, /*continue*/ false);
+  // Short scans in a loop so you can catch brief advertising bursts
+  for (int attempt = 0; attempt < 1; ++attempt) {
+    Serial.println("[BLE] Scanning 500ms for BLE HID device...");
+    NimBLEScanResults res = scan->getResults(500, /*is_continue=*/false);
+    Serial.printf("[BLE] Found %d devices.\n", res.getCount());
 
-    const NimBLEAdvertisedDevice* candidate = pickKeyboardFrom(results);
-    if (candidate) {
-      NimBLEAdvertisedDevice copy = *candidate; // copy before clearing results
-      if (connectAndSubscribe(&copy)) return;   // success
-      Serial.println("[BLE] Connect/subscribe failed; retrying scan...");
-    } else {
-      Serial.println("[SCAN] No keyboard found; rescanning...");
+    for (int i = 0; i < res.getCount(); ++i) {
+      const NimBLEAdvertisedDevice* dev = res.getDevice(i);
+      if (!dev) continue;
+
+      // Option 1: match exact address (works if not using RPA)
+      bool addrMatches = false;
+      for (auto& a : bondedAddrs) {
+        if (dev->getAddress().equals(a)) { addrMatches = true; break; }
+      }
+
+      // Option 2: also accept “looks like our keyboard” as a fallback
+      bool looksLikeKb = dev->isAdvertisingService(UUID_HID_SERVICE);
+
+      if (addrMatches || looksLikeKb) {
+        if (addrMatches) {
+          Serial.println("[BLE] Bonded device.");
+        }
+        if (looksLikeKb) {
+          Serial.println("[BLE] Any keyboard device.");
+        }
+        Serial.print("[BLE] Trying to connect to ");
+        Serial.print(dev->getAddress().toString().c_str());
+        Serial.print(" -- ");
+        Serial.println(dev->getName().c_str());
+
+        g_client = NimBLEDevice::createClient();
+        g_client->setConnectTimeout(500);
+        if (g_client && g_client->connect(dev)) {  // note: connect via *advertised device*
+          Serial.println("[BLE] Connected via scan match");
+          subscribeAllInputReportsFromHIDService();
+        }
+      }
     }
+
     scan->clearResults();
   }
 }
 
-void setup() {
-  Serial.begin(115200);
-  delay(1500);
-  Serial.println("\n=== ESP32-S3 BLE Keyboard Host (Report Protocol) ===");
-
+void initBLEHost() {
   NimBLEDevice::init("");
-  NimBLEDevice::setPower(ESP_PWR_LVL_P9);
-  NimBLEDevice::setSecurityAuth(false, false, true);
-
-  scanAndConnectLoop();
+  NimBLEDevice::setPower(ESP_PWR_LVL_N12);
+  NimBLEDevice::setSecurityAuth(true, false, true);
+  NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
 }
 
+void setup() {
+  Serial.begin(115200);
+  delay(3000);
+  Serial.println("\n=== ESP32-S3 BLE Keyboard Host (Report Protocol) ===");
+
+  initBLEHost();
+
+  connectKeyboard();
+}
+bool isKeyboardReady() {
+  return g_client && g_client->isConnected() && !g_inputs.empty();
+}
 void loop() {
-  if (g_client && !g_client->isConnected()) {
-    Serial.println("[BLE] Disconnected. Re-scanning...");
+  if (!isKeyboardReady()) {
+    Serial.println("[BLE] Keyboard is not ready. Re-scanning...");
     NimBLEDevice::deleteClient(g_client);
     g_client = nullptr;
     g_inputs.clear();
-    scanAndConnectLoop();
+    connectKeyboard();
+    delay(5000);
   }
   delay(200);
 }
