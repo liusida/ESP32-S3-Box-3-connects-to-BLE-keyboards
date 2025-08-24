@@ -17,7 +17,7 @@ void BleKeyboardHost::begin() {
     NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
 }
 
-void BleKeyboardHost::connect() {
+void BleKeyboardHost::connect(NimBLERemoteCharacteristic::notify_callback callback) {
     std::vector<NimBLEAddress> bonded;
     for (int i = 0; i < NimBLEDevice::getNumBonds(); i++)
         bonded.push_back(NimBLEDevice::getBondedAddress(i));
@@ -52,7 +52,7 @@ void BleKeyboardHost::connect() {
 
         if (client && client->connect(dev)) {
             Serial.println("[BLE] Connected via scan match");
-            subscribeReports();
+            subscribeReports(callback);
         }
     }
     scan->clearResults();
@@ -69,13 +69,8 @@ void BleKeyboardHost::pollLogs() {
     }
 }
 
-/* --- Static callback trampoline --- */
-void BleKeyboardHost::notifyThunk(NimBLERemoteCharacteristic *c, uint8_t *data, size_t len, bool isNotify) {
-    if (instance) instance->onReport(c, data, len, isNotify);
-}
-
 /* --- Report handler --- */
-void BleKeyboardHost::onReport(NimBLERemoteCharacteristic *c, uint8_t *data, size_t len, bool) {
+void BleKeyboardHost::pushLog(NimBLERemoteCharacteristic *c, uint8_t *data, size_t len, bool) {
     char buf[256];
     int pos = snprintf(buf, sizeof(buf), "[HID] Report (len=%d, handle=%u): ",
                        (int)len, c->getHandle());
@@ -115,7 +110,7 @@ void BleKeyboardHost::onReport(NimBLERemoteCharacteristic *c, uint8_t *data, siz
 }
 
 /* --- Subscribe to reports --- */
-void BleKeyboardHost::subscribeReports() {
+void BleKeyboardHost::subscribeReports(NimBLERemoteCharacteristic::notify_callback callback) {
     NimBLERemoteService *hid = client->getService(UUID_HID_SERVICE);
     if (!hid) { client->disconnect(); return; }
 
@@ -128,7 +123,7 @@ void BleKeyboardHost::subscribeReports() {
         if (chr->getUUID() != UUID_REPORT) continue;
         if (chr->canNotify()) {
             Serial.printf("[HID] Subscribing Input Report: handle=%u\n", chr->getHandle());
-            if (chr->subscribe(true, notifyThunk)) inputs.push_back(chr);
+            if (chr->subscribe(true, callback)) inputs.push_back(chr);
         }
     }
     if (inputs.empty()) Serial.println("[HID] No subscribable Input Reports found.");

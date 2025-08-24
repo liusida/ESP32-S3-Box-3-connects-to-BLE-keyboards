@@ -9,9 +9,10 @@ public:
     BleKeyboardHost();
 
     void begin();
-    void connect();
+    void connect(NimBLERemoteCharacteristic::notify_callback callback);
     bool isReady() const;
     void pollLogs();
+    void pushLog(NimBLERemoteCharacteristic *c, uint8_t *data, size_t len, bool isNotify);
 
 private:
     NimBLEClient *client;
@@ -23,9 +24,7 @@ private:
 
     static BleKeyboardHost *instance;  // singleton pointer
 
-    static void notifyThunk(NimBLERemoteCharacteristic *c, uint8_t *data, size_t len, bool isNotify);
-    void onReport(NimBLERemoteCharacteristic *c, uint8_t *data, size_t len, bool isNotify);
-    void subscribeReports();
+    void subscribeReports(NimBLERemoteCharacteristic::notify_callback callback);
 
     static char hidToAscii(uint8_t kc, bool shift);
 };
