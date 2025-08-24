@@ -17,7 +17,7 @@ void BleKeyboardHost::begin() {
     NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
 }
 
-void BleKeyboardHost::connect(NimBLERemoteCharacteristic::notify_callback callback) {
+void BleKeyboardHost::connect(NimBLERemoteCharacteristic::notify_callback callback, uint32_t duration) {
     std::vector<NimBLEAddress> bonded;
     for (int i = 0; i < NimBLEDevice::getNumBonds(); i++)
         bonded.push_back(NimBLEDevice::getBondedAddress(i));
@@ -27,8 +27,8 @@ void BleKeyboardHost::connect(NimBLERemoteCharacteristic::notify_callback callba
     scan->setInterval(45);
     scan->setWindow(45);
 
-    Serial.println("[BLE] Scanning 500ms for HID device...");
-    NimBLEScanResults res = scan->getResults(500, false);
+    Serial.println("[BLE] Scanning for HID device...");
+    NimBLEScanResults res = scan->getResults(duration, false);
     Serial.printf("[BLE] Found %d devices.\n", res.getCount());
 
     for (int i = 0; i < res.getCount(); i++) {

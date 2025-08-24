@@ -9,7 +9,7 @@ public:
     BleKeyboardHost();
 
     void begin();
-    void connect(NimBLERemoteCharacteristic::notify_callback callback);
+    void connect(NimBLERemoteCharacteristic::notify_callback callback, uint32_t duration=500);
     bool isReady() const;
     void pollLogs();
     void pushLog(NimBLERemoteCharacteristic *c, uint8_t *data, size_t len, bool isNotify);

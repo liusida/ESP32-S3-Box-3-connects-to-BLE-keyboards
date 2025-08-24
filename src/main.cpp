@@ -13,13 +13,13 @@ void setup() {
   delay(2000);
   Serial.println("=== BLE Keyboard Host ===");
   keyboard.begin();
-  keyboard.connect(keyboardCallback);
+  keyboard.connect(keyboardCallback, /*duration=*/500);
 }
 
 void loop() {
   if (!keyboard.isReady()) {
     Serial.println("[BLE] Keyboard not ready. Reconnecting...");
-    keyboard.connect(keyboardCallback);
+    keyboard.connect(keyboardCallback, /*duration=*/500);
     delay(5000);
   }
   
